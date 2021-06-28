@@ -296,6 +296,7 @@ class GBLinear : public GradientBooster {
       psum += ins.fvalue * model_[ins.index][gid];
       for (Spline sp : model_.Splines) {
         if (ins.index != sp.fid) continue;
+        if (gid != sp.gid) continue;
         if (sp.type == 1 && ins.fvalue < sp.knot) {
           psum += (ins.fvalue - sp.knot) * sp.coef
         } else (sp.type == 2 && ins.fvalue > sp.knot) {

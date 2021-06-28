@@ -108,6 +108,8 @@ class CoordinateUpdater : public LinearUpdater {
                        gradient[2], gradient[3], gradient[4], 
                        tparam_.reg_alpha_denorm, tparam_.reg_lambda_denorm,
                        *in_gpair, p_fmat)
+    bs.first.coef = tparam_.learning_rate * bs.first.coef
+    bs.second.coef = tparam_.learning_rate * bs.second.coef
     if (dw > (abs(bs.first.coef) + abs(bs.second.coef))){
       w += dw;
       UpdateResidualParallel(fidx, group_idx, ngroup, dw, in_gpair, p_fmat);

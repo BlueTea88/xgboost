@@ -266,22 +266,24 @@ inline std::pair<Spline, Spline> FindKnot(int group_idx, int num_group, int fidx
   smin.type = 1;
   smin.fid = fidx;
   smin.knot = best_knot;
+  smin.gid = group_idx;
   smax.coef = best_w_max;
   smax.type = 2;
   smax.fid = fidx;
   smax.knot = best_knot;
+  smax.gid = group_idx;
   return std::make_pair(smin, smax);
 }
 
 /**
  * \brief Updates the gradient vector with respect to a change in weight.
  *
- * \param fidx      The feature index.
- * \param group_idx Zero-based index of the group.
- * \param num_group Number of groups.
+ * \param fidx        The feature index.
+ * \param group_idx   Zero-based index of the group.
+ * \param num_group   Number of groups.
  * \param dw        The change in weight.
- * \param in_gpair  The gradient vector to be updated.
- * \param p_fmat    The input feature matrix.
+ * \param in_gpair    The gradient vector to be updated.
+ * \param p_fmat      The input feature matrix.
  */
 inline void UpdateResidualParallel(int fidx, int group_idx, int num_group,
                                    float dw, std::vector<GradientPair> *in_gpair,
@@ -299,6 +301,43 @@ inline void UpdateResidualParallel(int fidx, int group_idx, int num_group,
         GradientPair &p = (*in_gpair)[col[j].index * num_group + group_idx];
         if (p.GetHess() < 0.0f) return;
         p += GradientPair(p.GetHess() * col[j].fvalue * dw, 0);
+      });
+    }
+    exc.Rethrow();
+  }
+}
+
+/**
+ * \brief Updates the gradient vector with the addition of a pair of splines.
+ *
+ * \param fidx      The feature index.
+ * \param group_idx Zero-based index of the group.
+ * \param num_group Number of groups.
+ * \param spline_min  Details of the left spline
+ * \param spline_max  Details of the right spline
+ * \param in_gpair  The gradient vector to be updated.
+ * \param p_fmat    The input feature matrix.
+ */
+inline void UpdateSplineResidualParallel(int fidx, int group_idx, int num_group,
+                                         Spline spline_min, Spline spline_max, 
+                                         DMatrix *p_fmat) {
+  if (dw == 0.0f) return;
+  for (const auto &batch : p_fmat->GetBatches<CSCPage>()) {
+    auto page = batch.GetView();
+    auto col = page[fidx];
+    // update grad value
+    const auto num_row = static_cast<bst_omp_uint>(col.size());
+    dmlc::OMPException exc;
+#pragma omp parallel for schedule(static)
+    for (bst_omp_uint j = 0; j < num_row; ++j) {
+      exc.Run([&]() {
+        GradientPair &p = (*in_gpair)[col[j].index * num_group + group_idx];
+        if (p.GetHess() < 0.0f) return;
+        if (col[j].fvalue < spline_min.knot) {
+          p += GradientPair(p.GetHess() * (col[j].fvalue - spline_min.knot) * spline_min.coef, 0);
+        } else {
+          p += GradientPair(p.GetHess() * (col[j].fvalue - spline_max.knot) * spline_max.coef, 0);
+        }
       });
     }
     exc.Rethrow();

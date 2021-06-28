@@ -58,6 +58,8 @@ class GBLinearModel : public Model {
     unsigned fid;
     // knot point related to the spline
     bst_float knot;
+    // group index
+    unsigned gid;
   }
 
  public:
