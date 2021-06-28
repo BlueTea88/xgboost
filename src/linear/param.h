@@ -28,6 +28,7 @@ struct LinearTrainParam : public XGBoostParameter<LinearTrainParam> {
   /*! \brief regularization weight for L1 norm */
   float reg_alpha;
   int feature_selector;
+  bool splines;
   // declare parameters
   DMLC_DECLARE_PARAMETER(LinearTrainParam) {
     DMLC_DECLARE_FIELD(learning_rate)
@@ -50,6 +51,9 @@ struct LinearTrainParam : public XGBoostParameter<LinearTrainParam> {
         .add_enum("greedy", kGreedy)
         .add_enum("random", kRandom)
         .describe("Feature selection or ordering method.");
+    DMLC_DECLARE_FIELD(splines)
+        .set_default(false)
+        .describe("Whether to fit min/max splines.")
     // alias of parameters
     DMLC_DECLARE_ALIAS(learning_rate, eta);
     DMLC_DECLARE_ALIAS(reg_lambda, lambda);

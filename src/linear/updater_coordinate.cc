@@ -70,7 +70,11 @@ class CoordinateUpdater : public LinearUpdater {
           (i, *model, group_idx, in_gpair->ConstHostVector(), p_fmat,
            tparam_.reg_alpha_denorm, tparam_.reg_lambda_denorm);
         if (fidx < 0) break;
-        this->UpdateFeature(fidx, group_idx, &in_gpair->HostVector(), p_fmat, model);
+        if (!tparam_.splines){
+          this->UpdateFeature(fidx, group_idx, &in_gpair->HostVector(), p_fmat, model);
+        } else {
+          this->UpdateFeatureSplines(fidx, group_idx, &in_gpair->HostVector(), p_fmat, model);
+        }
       }
     }
     monitor_.Stop("UpdateFeature");
@@ -88,6 +92,28 @@ class CoordinateUpdater : public LinearUpdater {
                         tparam_.reg_lambda_denorm));
     w += dw;
     UpdateResidualParallel(fidx, group_idx, ngroup, dw, in_gpair, p_fmat);
+  }
+
+  inline void UpdateFeatureSplines(int fidx, int group_idx, std::vector<GradientPair> *in_gpair,
+                                   DMatrix *p_fmat, gbm::GBLinearModel *model) {
+    const int ngroup = model->learner_model_param->num_output_group;
+    bst_float &w = (*model)[fidx][group_idx];
+    auto gradient =
+        GetGradientPlusParallel(group_idx, ngroup, fidx, *in_gpair, p_fmat);
+    auto dw = static_cast<float>(
+        tparam_.learning_rate *
+        CoordinateDelta(gradient[0], gradient[1], w, tparam_.reg_alpha_denorm,
+                        tparam_.reg_lambda_denorm));
+    auto bs = FindKnot(group_idx, ngroup, fidx, gradient[0], gradient[1],
+                       gradient[2], gradient[3], gradient[4], 
+                       tparam_.reg_alpha_denorm, tparam_.reg_lambda_denorm,
+                       *in_gpair, p_fmat)
+    if (dw > (abs(bs.first.coef) + abs(bs.second.coef))){
+      w += dw;
+      UpdateResidualParallel(fidx, group_idx, ngroup, dw, in_gpair, p_fmat);
+    } else {
+      
+    }
   }
 
  private:

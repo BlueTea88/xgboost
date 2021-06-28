@@ -47,6 +47,19 @@ class GBLinearModel : public Model {
   int32_t num_boosted_rounds;
   LearnerModelParam const* learner_model_param;
 
+  // structure to store parameters of one spline
+  struct Spline {
+    // allows the forms coef*(min(x - knot, 0) or coef*max(x - knot, 0))
+    // coefficient weight
+    bst_float coef;
+    // type of spline (1 - min, 2 - max)
+    int32_t type;
+    // feature index
+    unsigned fid;
+    // knot point related to the spline
+    bst_float knot;
+  }
+
  public:
   explicit GBLinearModel(LearnerModelParam const* learner_model_param) :
       num_boosted_rounds{0}, learner_model_param {learner_model_param} {}
@@ -64,6 +77,9 @@ class GBLinearModel : public Model {
                   learner_model_param->num_output_group);
     std::fill(weight.begin(), weight.end(), 0.0f);
   }
+
+  // splines
+  std::vector<Spline> splines;
 
   void SaveModel(Json *p_out) const override;
   void LoadModel(Json const &in) override;

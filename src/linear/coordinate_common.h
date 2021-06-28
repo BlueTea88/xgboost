@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 #include <limits>
+#include <array>
 
 #include "xgboost/data.h"
 #include "xgboost/parameter.h"
@@ -133,6 +134,44 @@ inline std::pair<double, double> GetGradientParallel(int group_idx, int num_grou
 }
 
 /**
+ * \brief Get the gradient and a few other attributes with respect to a single feature. Row-wise multithreaded.
+ *
+ * \param group_idx Zero-based index of the group.
+ * \param num_group Number of groups.
+ * \param fidx      The target feature.
+ * \param gpair     Gradients.
+ * \param p_fmat    The feature matrix.
+ *
+ * \return  The gradient and diagonal Hessian entry for a given feature plus Hx, H and g.
+ */
+inline std::array<double, 5> GetGradientPlusParallel(int group_idx, int num_group, int fidx,
+                                                     const std::vector<GradientPair> &gpair,
+                                                     DMatrix *p_fmat) {
+  double sum_grad = 0.0, sum_hess = 0.0, sum_hx = 0.0, sum_h = 0.0, sum_g = 0.0;
+  for (const auto &batch : p_fmat->GetBatches<CSCPage>()) {
+    auto page = batch.GetView();
+    auto col = page[fidx];
+    const auto ndata = static_cast<bst_omp_uint>(col.size());
+    dmlc::OMPException exc;
+#pragma omp parallel for schedule(static) reduction(+ : sum_grad, sum_hess, sum_hx, sum_h, sum_g)
+    for (bst_omp_uint j = 0; j < ndata; ++j) {
+      exc.Run([&]() {
+        const bst_float v = col[j].fvalue;
+        auto &p = gpair[col[j].index * num_group + group_idx];
+        if (p.GetHess() < 0.0f) return;
+        sum_grad += p.GetGrad() * v;
+        sum_hess += p.GetHess() * v * v;
+        sum_hx += p.GetHess() * v;
+        sum_h += p.GetHess();
+        sum_g += p.GetGrad();
+      });
+    }
+    exc.Rethrow();
+  }
+  return std::array<double, 5> {sum_grad, sum_hess, sum_hx, sum_h, sum_g};
+}
+
+/**
  * \brief Get the gradient with respect to the bias. Row-wise multithreaded.
  *
  * \param group_idx Zero-based index of the group.
@@ -160,6 +199,78 @@ inline std::pair<double, double> GetBiasGradientParallel(int group_idx, int num_
   }
   exc.Rethrow();
   return std::make_pair(sum_grad, sum_hess);
+}
+
+/**
+ * \brief Find the best knot (by change in weight) for a single feature.
+ * 
+ * \param group_idx           Zero-based index of the group.
+ * \param num_group           Number of groups.
+ * \param fidx                The target feature.
+ * \param sum_grad            The sum gradient.
+ * \param sum_hess            The sum hess.
+ * \param sum_hx              The sum hx.
+ * \param sum_h               The sum h.
+ * \param sum_g               The sum g.
+ * \param reg_alpha           Unnormalised L1 penalty.
+ * \param reg_lambda          Unnormalised L2 penalty.
+ * \param gpair               Gradients.
+ * \param p_fmat              The feature matrix.
+ *
+ * \return  Spline pair details of the best knot.
+ */
+inline std::pair<Spline, Spline> FindKnot(int group_idx, int num_group, int fidx, 
+                                          double sum_grad, double sum_hess, 
+                                          double sum_hx, double sum_h, double sum_g,
+                                          double reg_alpha, double reg_lambda,
+                                          const std::vector<GradientPair> &gpair,
+                                          DMatrix *p_fmat) {
+  const auto &batch : p_fmat->GetBatches<SortedCSCPage>;
+  auto page = batch.GetView()[fidx];
+  const Entry begin = page.data() + page.size();
+  const Entry end = page.data();
+  // conduct backwards search
+  double right_grad = 0.0, right_g = 0.0, right_hess = 0.0, right_hx = 0.0, right_h = 0.0;
+  double best_w_min = 0.0, best_w_max = 0.0, w_min = 0.0, w_max = 0.0;
+  bst_float best_knot = begin->fvalue, k = begin->fvalue;
+  const Entry *it;
+  for (it = begin; it != end; it += -1) {
+    auto &p = gpair[it->index * num_group + group_idx];
+    const bst_float v = it->fvalue;
+    // keep track of sums to the right of knot
+    right_grad += p.GetGrad() * v;
+    right_g += p.GetGrad();
+    right_hess += p.GetHess() * v * v;
+    right_hx += p.GetHess() * v;
+    right_h += p.GetHess();    
+    // evaluate spline weights of new knots, assume no original weight
+    if (it->fvalue <> k){
+      k = it->fvalue
+      w_max = CoordinateDelta(right_grad - right_g*k, 
+                              right_hess - 2*right_hx*k + right_h*k*k,
+                              0, reg_alpha, reg_lambda)
+      w_min = CoordinateDelta(sum_grad-right_grad - (sum_g-right_g)*k, 
+                              sum_hess-right_hess - 2*(sum_hx-right_hx)*k + (sum_h-right_h)*k*k,
+                              0, reg_alpha, reg_lambda)
+      // update best knot if absolute weights are greater
+      if ((abs(w_max) + abs(w_min)) > (abs(best_w_min) + abs(best_w_max))){
+        best_w_max = w_max;
+        best_w_min = w_min;
+        best_knot = k;
+      }
+    }
+  }
+  // return best spline details
+  Spline smin, smax;
+  smin.coef = best_w_min;
+  smin.type = 1;
+  smin.fid = fidx;
+  smin.knot = best_knot;
+  smax.coef = best_w_max;
+  smax.type = 2;
+  smax.fid = fidx;
+  smax.knot = best_knot;
+  return std::make_pair(smin, smax);
 }
 
 /**

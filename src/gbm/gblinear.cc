@@ -294,6 +294,14 @@ class GBLinear : public GradientBooster {
     for (const auto& ins : inst) {
       if (ins.index >= model_.learner_model_param->num_feature) continue;
       psum += ins.fvalue * model_[ins.index][gid];
+      for (Spline sp : model_.Splines) {
+        if (ins.index != sp.fid) continue;
+        if (sp.type == 1 && ins.fvalue < sp.knot) {
+          psum += (ins.fvalue - sp.knot) * sp.coef
+        } else (sp.type == 2 && ins.fvalue > sp.knot) {
+          psum += (ins.fvalue - sp.knot) * sp.coef
+        }
+      }
     }
     preds[gid] = psum;
   }
